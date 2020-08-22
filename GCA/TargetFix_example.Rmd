@@ -1,0 +1,92 @@
+---
+title: "Applying GCA to VWP Data: Example 1"
+subtitle: "Target Fixations"
+author: "Dan Mirman"
+date: "`r Sys.Date()`"
+output:
+  tufte::tufte_html: default
+  tufte::tufte_handout: default
+---
+
+```{r setup, include=FALSE}
+library(tufte)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'))
+options(htmltools.dir.version = FALSE)
+```
+
+# Preliminaries
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(gazer) # helper functions and example data sets
+```
+
+```{r fig.margin = TRUE, echo=FALSE}
+ggplot(TargetFix, aes(Time, meanFix, color=Condition, fill=Condition)) +
+  stat_summary(fun = mean, geom="line") +
+  stat_summary(fun.data = mean_se, geom="ribbon", alpha=0.5, color=NA) +
+  theme_bw() + 
+  labs(y="Fixation Proportion", x="Time Since Word Onset (ms)") +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1")
+```
+
+For this example, we will consider the simple target fixation data shown on the right from a VWP experiment with a word frequency manipulation (High frequency words recognized faster than Low frequency words). Note that since Condition (High vs. Low frequency) was manipulated within-participants, we will want to include nested random effects of Condition with Subject.
+
+The starting data frame is shown below. `Subject` is the the subject ID, `Time` is time (in ms) from word onset, `timeBin` identifies the 100ms time bin corresponding to this time point (convenient for aligning orthogonal time), `Condition` is the word frequency condition, and `meanFix` is the mean proportion of fixations to the target object.
+
+```{r}
+summary(TargetFix)
+```
+
+The first step is to create a third-order polynomial based on the `timeBin` values.
+
+```{r}
+TargetFix.gca <- code_poly(TargetFix, predictor="timeBin", poly.order = 3, draw.poly = FALSE)
+summary(TargetFix.gca)
+```
+
+
+Since this is a simple case with just one within-subjects fixed effect that has only two levels, we can skip to the full model and examine its parameter estimates:
+
+```{r}
+m.full <- lmer(meanFix ~ (poly1+poly2+poly3)*Condition + 
+                 (poly1+poly2+poly3 | Subject) + 
+                 (poly1+poly2 | Subject:Condition), 
+               data=TargetFix.gca, REML=FALSE)
+summary(m.full)
+```
+
+Another approach is to selectively remove individual effects of Condition and use model comparisons to evaluate each effect. This method would have produced very similar results:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+m.base <- lmer(meanFix ~ (poly1+poly2+poly3) + 
+                 (poly1+poly2+poly3 | Subject) + 
+                 (poly1+poly2 | Subject:Condition), 
+               data=TargetFix.gca, REML=FALSE)
+m.0 <- lmer(meanFix ~ (poly1+poly2+poly3) + Condition +
+                 (poly1+poly2+poly3 | Subject) + 
+                 (poly1+poly2 | Subject:Condition), 
+               data=TargetFix.gca, REML=FALSE)
+m.1 <- lmer(meanFix ~ (poly1*Condition + poly2+poly3) + 
+                 (poly1+poly2+poly3 | Subject) + 
+                 (poly1+poly2 | Subject:Condition), 
+               data=TargetFix.gca, REML=FALSE)
+m.2 <- lmer(meanFix ~ (poly1+poly2)*Condition +poly3 + 
+                 (poly1+poly2+poly3 | Subject) + 
+                 (poly1+poly2 | Subject:Condition), 
+               data=TargetFix.gca, REML=FALSE)
+anova(m.base, m.0, m.1, m.2, m.full)
+```
+
+Here is how we might report these results:
+
+```{marginfigure}
+Mirman, D. (2014). _Growth Curve Analysis and Visualization Using R_. Boca Raton, FL: Chapman and Hall / CRC Press.
+```
+
+> Growth curve analysis (Mirman, 2014) was used to analyze the target gaze data from 300ms to 1000ms after word onset. The overall time course of target fixations was modeled with a third-order (cubic) orthogonal polynomial and fixed effects of Condition (Low vs. High frequency; within-participants) on all time terms. The model also included participant random effects on all time terms and participant-by-condition random effects on all time terms except the cubic (estimating random effects is “expensive” in terms of the number of observation required, so this cubic term was excluded because it tends to capture less-relevant effects in the tails). Parameter estimate degrees of freedom and corresponding p-values were estimated using Satterthwaite's method. There was a significant effect of Condition on the intercept term, indicating lower overall target fixation proportions for the Low condition relative to the High condition (Estimate = -0.0581, SE = 0.0196, p < 0.01). There was also a significant effect on the quadratic term, indicating shallower curvature - slower word recognition - in the Low condition relative to the High condition (Estimate = 0.164, SE = 0.0544, p < 0.01). All other effects of Condition were not significant (see Table 1 for full results).
+
