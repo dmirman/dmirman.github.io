@@ -1,0 +1,144 @@
+---
+title: "Applying GCA to VWP Data: Example 1"
+subtitle: "Target Fixations"
+author: "Dan Mirman"
+date: "`r Sys.Date()`"
+output:
+  tufte::tufte_html: default
+  tufte::tufte_handout: default
+---
+
+```{r setup, include=FALSE}
+library(tufte)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'))
+options(htmltools.dir.version = FALSE)
+```
+
+# Preliminaries
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(gazer) # helper functions and example data sets
+```
+
+```{marginfigure}
+Mirman, D., Yee, E., Blumstein, S., and Magnuson, J.S. (2011). Theories of spoken word recognition deficits in aphasia: Evidence from eye-tracking and computational modeling. _Brain and Language, 117_, 53-68. [pdf](https://dmirman.github.io/papers/Mirman_etal_2011.pdf)
+```
+
+These are cohort and rhyme competition data from 5 participants with Broca's aphasia, 3 participants with Wernicke's aphasia, and 12 age-matched controls (Mirman et al., 2011). The group means are shown below, with cohort competition in the top row and rhyme competition in the bottom row. Visually, it seems that the participants with Wernicke's aphasia exhibited more cohort competition and less rhyme competition, whereas participants with Broca's aphasia exhibited the opposite pattern.
+
+```{r fig.fullwidth = TRUE, echo=FALSE}
+ggplot(CohortRhyme, aes(Time, FixProp, color=Object)) +
+  facet_grid(Type ~ Group) +
+  stat_summary(fun = mean, geom="line") +
+  theme_bw() + 
+  labs(y="Fixation Proportion", x="Time Since Word Onset (ms)") +
+  scale_color_brewer(palette = "Set1") 
+```
+
+The starting data frame is shown below. 
+
+```{r}
+summary(CohortRhyme)
+```
+
+The first step is to create a fourth-order polynomial based on the `timeBin` values to capture the rise and fall of the competition curves:
+
+```{r}
+CohortRhyme.gca <- code_poly(CohortRhyme, predictor = "timeBin", poly.order = 4, draw.poly = FALSE)
+```
+
+# Group differences
+
+When the individual differences are "experiment external", such as aphasia subtype (or continuous variables like age), the best option is to add the individual difference variable as a fixed effect to the model. So we start with a base model of the overall competition effect (Object fixed effect) and add a fixed effect of Group. It would be a good idea to build up the Group effects gradually, but we'll skip to the full model to keep this example more brief:
+
+```{r}
+cohort.base <- lmer(FixProp ~ (poly1+poly2+poly3+poly4)*Object + 
+                      (1+poly1+poly2+poly3+poly4 | subjID) + 
+                      (1+poly1+poly2 | subjID:Object), 
+                    data=subset(CohortRhyme.gca, Type == "Cohort"), REML=F)
+cohort.group <- lmer(FixProp ~ (poly1+poly2+poly3+poly4)*Object*Group +
+                       (1+poly1+poly2+poly3+poly4 | subjID) + 
+                       (1+poly1+poly2 | subjID:Object), 
+                     data=subset(CohortRhyme.gca, Type == "Cohort"), REML=F)
+anova(cohort.base, cohort.group)
+```
+
+From the critical `Object:Group` parameter estimates below, we can see that this overall Group difference is due to the Wernicke's aphasia group differing from the Control (baseline reference) group. We're just going to look at the effects up to the quadratic term because the higher order terms are just capturing differences in the tails. Note that the parameter estimates are for the Unrelated object relative to the Related object, so a negative estimate for the Intercept term (e.g., ObjectUnrelated:GroupWernicke) corresponds to a larger competition effect (i.e., for the Wernicke's group compared to the Control group, the Unrelated object has an even lower intercept than the Competitor does).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+coef(summary(cohort.group))[21:30,]
+```
+
+The same steps for the rhyme competition data reveal that only the Broca's group differed from controls:
+
+```{r}
+rhyme.base <- lmer(FixProp ~ (poly1+poly2+poly3+poly4)*Object + 
+                      (1+poly1+poly2+poly3+poly4 | subjID) + 
+                      (1+poly1+poly2 | subjID:Object), 
+                    data=subset(CohortRhyme.gca, Type == "Rhyme"), REML=F)
+rhyme.group <- lmer(FixProp ~ (poly1+poly2+poly3+poly4)*Object*Group +
+                       (1+poly1+poly2+poly3+poly4 | subjID) + 
+                       (1+poly1+poly2 | subjID:Object), 
+                     data=subset(CohortRhyme.gca, Type == "Rhyme"), REML=F)
+anova(rhyme.base, rhyme.group)
+coef(summary(rhyme.group))[21:30,]
+```
+
+So far, we have established a double dissociation -- one group has larger cohort competition, the other group has larger rhyme competition -- but we can also ask whether there is an association between the effects. That is, do participants with larger cohort effects tend to show smaller rhyme effects? To test this kind of "experiment internal" individual differences, we can use the random effects to estimate each participants effect size and then test the correlation between the effect sizes.
+
+# Individual differences
+
+The random effects are the systematic deviations from the "mean" pattern predicted by the fixed effects. So we'll use the random effects from the base model, which did not distinguish between participant groups, so we can get individual effect sizes relative to the overall mean (otherwise we'd be looking at individual effect sizes relative to the sub-group mean). You can extract random effects from a model using the `lme4::ranef` function, but it's somewhat more convenient to use `gazer::get_ranef`, which allows you to specify which random effects you want and makes them a little more convenient to work with:
+
+```{r}
+re.cohort <- get_ranef(cohort.base, 'subjID:Object')
+re.rhyme <- get_ranef(rhyme.base, 'subjID:Object')
+```
+
+Both data frames will have the same structure:
+
+```{r}
+head(re.cohort)
+```
+
+To estimate individual participant effect sizes, we need to compute the differences between random effect estimates (Intercept, poly1, poly2) for Competitor vs. Unrelated objects for each participant:
+
+```{r}
+ES.coh <- re.cohort %>% group_by(subjID) %>% 
+  summarise(Coh.Intercept = Intercept[Object=="Competitor"] -
+              Intercept[Object=="Unrelated"], 
+            Coh.Quadratic = poly2[Object=="Competitor"] -
+              poly2[Object=="Unrelated"])
+ES.rhy <- re.rhyme %>% group_by(subjID) %>% 
+  summarise(Rhy.Intercept = Intercept[Object=="Competitor"] -
+              Intercept[Object=="Unrelated"], 
+            Rhy.Quadratic = poly2[Object=="Competitor"] -
+              poly2[Object=="Unrelated"])
+ES <- merge(ES.coh, ES.rhy, by="subjID")
+group <- unique(subset(CohortRhyme, select=c(subjID, Group))) #get group assignments from original data frame
+ES <- merge(ES, group, by="subjID")
+summary(ES)
+```
+
+```{r fig.margin = TRUE, echo=FALSE}
+ggplot(ES, aes(Coh.Intercept, Rhy.Intercept, color=Group)) +
+  geom_point(size=3) +
+  theme_bw(base_size = 14) + 
+  labs(y="Rhyme Effect Size (Intercept)", 
+       x="Cohort Effect Size (Intercept)") +
+  scale_color_manual(values = c("gray", "red", "blue"))
+```
+
+Now we can examine a scatterplot of the individual cohort and rhyme competition effect sizes (effects on the intercept, shown on the right) and compute correlations across the complete sample and just for the participants with aphasia:
+
+```{r}
+with(ES, cor.test(Coh.Intercept, Rhy.Intercept))
+with(subset(ES, Group != "Control"), cor.test(Coh.Intercept, Rhy.Intercept))
+with(subset(ES, Group == "Control"), cor.test(Coh.Intercept, Rhy.Intercept))
+```
+
+The correlation is significant for participants with aphasia (r = -0.86, p = 0.006), but not for control participants (r = 0.34, p > 0.25). This suggests that there may be a single mechanism behind this pattern, in contrast to the standard separable components interpretation of a double dissociation. 
