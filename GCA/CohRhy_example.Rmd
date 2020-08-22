@@ -1,6 +1,6 @@
 ---
-title: "Applying GCA to VWP Data: Example 1"
-subtitle: "Target Fixations"
+title: "Applying GCA to VWP Data: Example 2"
+subtitle: "Individual Differences"
 author: "Dan Mirman"
 date: "`r Sys.Date()`"
 output:
